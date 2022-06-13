@@ -18,13 +18,14 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
-#include <temp_board_main.h>
 #include "main.h"
 #include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "temp_board_main.h"
+#include "spi_adc.h"
+#include "DAM.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -42,6 +43,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+
 CAN_HandleTypeDef hcan1;
 CAN_HandleTypeDef hcan2;
 
@@ -50,14 +53,12 @@ SPI_HandleTypeDef hspi3;
 SPI_HandleTypeDef hspi4;
 SPI_HandleTypeDef hspi5;
 SPI_HandleTypeDef hspi6;
-DMA_HandleTypeDef hdma_spi1_rx;
-DMA_HandleTypeDef hdma_spi3_rx;
-DMA_HandleTypeDef hdma_spi4_rx;
-DMA_HandleTypeDef hdma_spi5_rx;
-DMA_HandleTypeDef hdma_spi6_rx;
+
+TIM_HandleTypeDef htim14;
 
 osThreadId taskMain_LoopHandle;
-osThreadId taskGCAN_HardwaHandle;
+osThreadId taskGCAN_TXHandle;
+osThreadId task_GCAN_RXHandle;
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -66,15 +67,17 @@ osThreadId taskGCAN_HardwaHandle;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_CAN1_Init(void);
-static void MX_DMA_Init(void);
 static void MX_CAN2_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_SPI3_Init(void);
 static void MX_SPI4_Init(void);
 static void MX_SPI5_Init(void);
 static void MX_SPI6_Init(void);
+static void MX_TIM14_Init(void);
+static void MX_ADC1_Init(void);
 void task_main_loop(void const * argument);
-void task_gcan_hw(void const * argument);
+void task_gcan_tx(void const * argument);
+void task_gcan_rx(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -114,16 +117,17 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_CAN1_Init();
-  MX_DMA_Init();
   MX_CAN2_Init();
   MX_SPI1_Init();
   MX_SPI3_Init();
   MX_SPI4_Init();
   MX_SPI5_Init();
   MX_SPI6_Init();
+  MX_TIM14_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
-  init(&hcan1);
+  init(&hcan1, &hcan2);
 
   /* USER CODE END 2 */
 
@@ -148,9 +152,13 @@ int main(void)
   osThreadDef(taskMain_Loop, task_main_loop, osPriorityNormal, 0, 256);
   taskMain_LoopHandle = osThreadCreate(osThread(taskMain_Loop), NULL);
 
-  /* definition and creation of taskGCAN_Hardwa */
-  osThreadDef(taskGCAN_Hardwa, task_gcan_hw, osPriorityNormal, 0, 256);
-  taskGCAN_HardwaHandle = osThreadCreate(osThread(taskGCAN_Hardwa), NULL);
+  /* definition and creation of taskGCAN_TX */
+  osThreadDef(taskGCAN_TX, task_gcan_tx, osPriorityNormal, 0, 256);
+  taskGCAN_TXHandle = osThreadCreate(osThread(taskGCAN_TX), NULL);
+
+  /* definition and creation of task_GCAN_RX */
+  osThreadDef(task_GCAN_RX, task_gcan_rx, osPriorityNormal, 0, 256);
+  task_GCAN_RXHandle = osThreadCreate(osThread(task_GCAN_RX), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -219,6 +227,56 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_0;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
 }
 
 /**
@@ -318,7 +376,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -358,7 +416,7 @@ static void MX_SPI3_Init(void)
   hspi3.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi3.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi3.Init.NSS = SPI_NSS_SOFT;
-  hspi3.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
+  hspi3.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_128;
   hspi3.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi3.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi3.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -398,7 +456,7 @@ static void MX_SPI4_Init(void)
   hspi4.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi4.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi4.Init.NSS = SPI_NSS_SOFT;
-  hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
+  hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
   hspi4.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi4.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi4.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -438,7 +496,7 @@ static void MX_SPI5_Init(void)
   hspi5.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi5.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi5.Init.NSS = SPI_NSS_SOFT;
-  hspi5.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
+  hspi5.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
   hspi5.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi5.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi5.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -478,7 +536,7 @@ static void MX_SPI6_Init(void)
   hspi6.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi6.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi6.Init.NSS = SPI_NSS_SOFT;
-  hspi6.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
+  hspi6.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
   hspi6.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi6.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi6.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -496,31 +554,33 @@ static void MX_SPI6_Init(void)
 }
 
 /**
-  * Enable DMA controller clock
+  * @brief TIM14 Initialization Function
+  * @param None
+  * @retval None
   */
-static void MX_DMA_Init(void)
+static void MX_TIM14_Init(void)
 {
 
-  /* DMA controller clock enable */
-  __HAL_RCC_DMA2_CLK_ENABLE();
-  __HAL_RCC_DMA1_CLK_ENABLE();
+  /* USER CODE BEGIN TIM14_Init 0 */
 
-  /* DMA interrupt init */
-  /* DMA1_Stream0_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
-  /* DMA2_Stream0_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
-  /* DMA2_Stream3_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
-  /* DMA2_Stream5_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream5_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(DMA2_Stream5_IRQn);
-  /* DMA2_Stream6_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream6_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(DMA2_Stream6_IRQn);
+  /* USER CODE END TIM14_Init 0 */
+
+  /* USER CODE BEGIN TIM14_Init 1 */
+
+  /* USER CODE END TIM14_Init 1 */
+  htim14.Instance = TIM14;
+  htim14.Init.Prescaler = 0;
+  htim14.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim14.Init.Period = 65535;
+  htim14.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim14.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim14) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM14_Init 2 */
+
+  /* USER CODE END TIM14_Init 2 */
 
 }
 
@@ -586,23 +646,42 @@ void task_main_loop(void const * argument)
   /* USER CODE END 5 */
 }
 
-/* USER CODE BEGIN Header_task_gcan_hw */
+/* USER CODE BEGIN Header_task_gcan_tx */
 /**
-* @brief Function implementing the taskGCAN_Hardwa thread.
+* @brief Function implementing the taskGCAN_TX thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_task_gcan_hw */
-void task_gcan_hw(void const * argument)
+/* USER CODE END Header_task_gcan_tx */
+void task_gcan_tx(void const * argument)
 {
-  /* USER CODE BEGIN task_gcan_hw */
+  /* USER CODE BEGIN task_gcan_tx */
   /* Infinite loop */
   for(;;)
   {
-	  can_buffer_handling_loop();
+	  gopherCAN_tx_service_task();
     osDelay(1);
   }
-  /* USER CODE END task_gcan_hw */
+  /* USER CODE END task_gcan_tx */
+}
+
+/* USER CODE BEGIN Header_task_gcan_rx */
+/**
+* @brief Function implementing the task_GCAN_RX thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_task_gcan_rx */
+void task_gcan_rx(void const * argument)
+{
+  /* USER CODE BEGIN task_gcan_rx */
+  /* Infinite loop */
+  for(;;)
+  {
+	  gopherCAN_rx_buffer_service_task();
+    osDelay(1);
+  }
+  /* USER CODE END task_gcan_rx */
 }
 
  /**
@@ -622,6 +701,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     HAL_IncTick();
   }
   /* USER CODE BEGIN Callback 1 */
+
+  if (htim->Instance == TIM14)
+  {
+	  spi_timer_interrupt();
+  }
 
   /* USER CODE END Callback 1 */
 }

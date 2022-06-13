@@ -8,7 +8,7 @@
 
 #define MAIN_LOOP_DELAY_ms 10
 
-void init(CAN_HandleTypeDef* hcan_ptr);
+void init(CAN_HandleTypeDef* hcan_ptr, CAN_HandleTypeDef* hcan2_ptr);
 void can_buffer_handling_loop();
 void main_loop();
 
