@@ -10,6 +10,7 @@
 
 static float adc_to_temp(U16 adc, float last_val);
 static bool should_ignore_temp(FLOAT_CAN_STRUCT* param);
+static void send_temps_to_bms(void);
 
 // the HAL_CAN struct. This example only works for a single CAN bus
 CAN_HandleTypeDef* example_hcan;
@@ -25,6 +26,10 @@ extern TIM_HandleTypeDef htim14;
 
 #define TIMER_PSC 16
 
+// BMS CAN Defines
+#define BMS_MSG_ID 0x1839F380
+#define BMS_MSG_LEN 8
+
 // Use this to define what module this board will be
 #define THIS_MODULE_ID TEMP_BOARD_ID
 
@@ -32,26 +37,7 @@ extern TIM_HandleTypeDef htim14;
 #define NUMBER_OF_BATS 88
 #define LAST_BAT_STRUCT_ID (FIRST_BAT_STRUCT_ID + NUMBER_OF_BATS)
 
-FLOAT_CAN_STRUCT* ignored_temps[] =
-{
-		&bat_40_temp,
-		&bat_41_temp,
-		&bat_42_temp,
-		&bat_43_temp,
-		&bat_44_temp,
-		&bat_45_temp,
-		&bat_46_temp,
-		&bat_47_temp,
-		&bat_48_temp,
-		&bat_49_temp,
-		&bat_50_temp,
-		&bat_51_temp,
-		&bat_52_temp,
-		&bat_53_temp,
-		&bat_54_temp,
-		&bat_55_temp
-};
-#define NUM_IGNORED_TEMPS (sizeof(ignored_temps) / sizeof(*ignored_temps))
+U16 num_ignored_temps = 0;
 
 float table_voltages[] = {
 		1.30,
@@ -170,10 +156,11 @@ void main_loop(void)
 		U16 curr_can_struct_id = FIRST_BAT_STRUCT_ID;
 		FLOAT_CAN_STRUCT* curr_can_struct;
 		float val;
-		float minimum = 1337.0;
-		float maximum = -420.0;
+		float minimum = 119.0;
+		float maximum = -39.0;
 		double total = 0;
 		U32 count = 0;
+		num_ignored_temps = 0;
 
 		// update all of the temps from the averages converted in the timer interrupt
 		// into GCAN with the GSense function
@@ -205,6 +192,10 @@ void main_loop(void)
 						total += curr_can_struct->data;
 						count++;
 					}
+					else
+					{
+						num_ignored_temps++;
+					}
 				}
 			}
 		}
@@ -214,11 +205,11 @@ void main_loop(void)
 		update_and_queue_param_float(&bat_min_temp, minimum);
 		update_and_queue_param_float(&bat_max_temp, maximum);
 
-		// send to BMS every 200ms
+		// send to BMS every 100ms
 		static U32 bms_send_count = 0;
-		if (bms_send_count++ >= 20)
+		if (bms_send_count++ >= 10)
 		{
-			// TODO do it
+			send_temps_to_bms();
 			bms_send_count = 0;
 		}
 
@@ -274,13 +265,68 @@ static float adc_to_temp(U16 adc, float last_val)
 //  should be ignored. Returns true if it should be ignored, false otherwise
 static bool should_ignore_temp(FLOAT_CAN_STRUCT* param)
 {
-	U16 c;
-	for (c = 0; c < NUM_IGNORED_TEMPS; c++)
-	{
-		if (ignored_temps[c] == param) return true;
-	}
+	return (param->data < -39.0 || param->data > 119.0);
+}
 
-	return false;
+
+// send_temps_to_bms
+//  Send the min, max, and average temps to the BMS over CAN
+static void send_temps_to_bms(void)
+{
+	static U32 num_errors = 0;
+	CAN_TxHeaderTypeDef tx_header;
+	U32 tx_mailbox_num;
+	U8 bms_msg[BMS_MSG_LEN];
+	U8 checksum = 0;
+	S8 temp;
+	U8 c;
+
+	// build the can message
+	tx_header.IDE = CAN_ID_EXT;
+	tx_header.TransmitGlobalTime = DISABLE;
+	tx_header.RTR = 0;
+	tx_header.ExtId = BMS_MSG_ID;
+	tx_header.DLC = BMS_MSG_LEN;
+
+	// byte 0 is the TEM number
+	bms_msg[0] = 1;
+
+	// byte 1 is the lowest temp, S8 form
+	temp = (S8)bat_min_temp.data;
+	bms_msg[1] = temp;
+
+	// byte 2 is the highest temp, S8 form
+	temp = (S8)bat_max_temp.data;
+	bms_msg[2] = temp;
+
+	// byte 3 is the average temp, S8 form
+	temp = (S8)bat_ave_temp.data;
+	bms_msg[3] = temp;
+
+	// byte 4 is number of thermistors
+	bms_msg[4] = 3;
+
+	// byte 5 is highest thermistor id
+	bms_msg[5] = 2;
+
+	// byte 6 is lowest thermistor id
+	bms_msg[6] = 0;
+
+	// byte 7 is the checksum
+	checksum = 0;
+	checksum += 0x39;
+	checksum += BMS_MSG_LEN;
+	for (c = 0; c < BMS_MSG_LEN - 1; c++)
+	{
+		checksum += bms_msg[c];
+	}
+	bms_msg[7] = checksum;
+
+	//if (HAL_CAN_AddTxMessage(bms_can, &tx_header, bms_msg, &tx_mailbox_num) != HAL_OK)
+	if (HAL_CAN_AddTxMessage(example_hcan, &tx_header, bms_msg, &tx_mailbox_num) != HAL_OK)
+	{
+		num_errors++;
+	}
 }
 
 

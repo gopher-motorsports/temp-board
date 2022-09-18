@@ -60,7 +60,7 @@ TIM_HandleTypeDef* tim_ptr;
 // tracks the current channel that has been requested
 volatile U8 last_input_channel[NUMBER_OF_BUSSES] = { 0 };
 volatile U8 current_input_channel[NUMBER_OF_BUSSES] = { 0 };
-U16 tx_buffer;
+U16 spi_tx_buffer;
 
 
 // define_spi_bus
@@ -201,8 +201,8 @@ void spi_timer_interrupt(void)
 
 		// send the message to request the next channel using the AUTO_RESET mode.
 		// the RX will be enabled when the TX has confirmed to be sent
-		tx_buffer = channel_req_cmds[current_input_channel[bus]];
-		HAL_SPI_Transmit_IT(hspi_ptr_arr[bus], (U8*)&tx_buffer, CHAN_REQ_SIZE);
+		spi_tx_buffer = channel_req_cmds[current_input_channel[bus]];
+		HAL_SPI_Transmit_IT(hspi_ptr_arr[bus], (U8*)&spi_tx_buffer, CHAN_REQ_SIZE);
 
 		// increment what the current input channel is and request that new
 		// channel with a SPI request
