@@ -128,7 +128,7 @@ void init(CAN_HandleTypeDef* hcan_ptr, CAN_HandleTypeDef* hcan2_ptr)
 		// TODO
 	}
 	// this only sends, it does not produce anything in gsense
-	DAM_init(example_hcan, bms_can, NULL, NULL, NULL, NULL, GSENSE_LED_GPIO_Port, GSENSE_LED_Pin);
+	//DAM_init(example_hcan, bms_can, NULL, NULL, NULL, NULL, GSENSE_LED_GPIO_Port, GSENSE_LED_Pin);
 
 	// enable all of the variables in GopherCAN for testing
 	set_all_params_state(TRUE);
@@ -282,10 +282,12 @@ static void send_temps_to_bms(void)
 	U8 c;
 
 	// build the can message
-	tx_header.IDE = CAN_ID_EXT;
+	//tx_header.IDE = CAN_ID_EXT;
+	tx_header.IDE = CAN_ID_STD;
 	tx_header.TransmitGlobalTime = DISABLE;
 	tx_header.RTR = 0;
-	tx_header.ExtId = BMS_MSG_ID;
+	//tx_header.ExtId = BMS_MSG_ID;
+	tx_header.StdId = 0x17;
 	tx_header.DLC = BMS_MSG_LEN;
 
 	// byte 0 is the TEM number
@@ -304,10 +306,10 @@ static void send_temps_to_bms(void)
 	bms_msg[3] = temp;
 
 	// byte 4 is number of thermistors
-	bms_msg[4] = 3;
+	bms_msg[4] = 0x01;
 
 	// byte 5 is highest thermistor id
-	bms_msg[5] = 2;
+	bms_msg[5] = 0x01;
 
 	// byte 6 is lowest thermistor id
 	bms_msg[6] = 0;
